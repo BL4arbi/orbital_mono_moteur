@@ -2,6 +2,7 @@
 #include <WebServer.h>
 #include <AccelStepper.h>
 #include <SPIFFS.h>
+#include <DNSServer.h>  // Pour le captive portal
 
 // Configuration
 const char* ap_ssid = "ESP32-Stepper";
@@ -13,6 +14,10 @@ const char* ap_password = "stepper123";
 
 AccelStepper stepper(AccelStepper::DRIVER, PULSE_PIN, DIR_PIN);
 WebServer server(80);
+DNSServer dnsServer;  // Serveur DNS pour captive portal
+
+// Configuration DNS
+const byte DNS_PORT = 53;
 
 // Variables globales
 bool isRunning = false;
@@ -74,7 +79,19 @@ void setup() {
   
   WiFi.mode(WIFI_AP);
   WiFi.softAP(ap_ssid, ap_password);
+  
+  // Configuration IP fixe pour l'AP
+  IPAddress local_IP(192, 168, 4, 1);
+  IPAddress gateway(192, 168, 4, 1);
+  IPAddress subnet(255, 255, 255, 0);
+  WiFi.softAPConfig(local_IP, gateway, subnet);
+  
   Serial.println("WiFi AP: " + String(ap_ssid));
+  Serial.println("IP: " + WiFi.softAPIP().toString());
+  
+  // Démarrer le serveur DNS pour captive portal
+  dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
+  Serial.println("Captive Portal activé - Toute URL redirige vers l'interface");
   
   setupWebServer();
   server.begin();
@@ -82,6 +99,12 @@ void setup() {
 }
 
 void setupWebServer() {
+  // Captive Portal - Redirection pour toutes les URLs non trouvées
+  server.onNotFound([]() {
+    server.sendHeader("Location", "http://192.168.4.1/", true);
+    server.send(302, "text/plain", "");
+  });
+  
   // Page principale (inchangée)
   server.on("/", []() {
     String html = R"rawliteral(
@@ -90,6 +113,8 @@ void setupWebServer() {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
     <title>Stepper Controller</title>
     <style>
         body { font-family: Arial, sans-serif; margin: 20px; background: #f0f0f0; }
@@ -618,6 +643,7 @@ void setupWebServer() {
 }
 
 void loop() {
+  dnsServer.processNextRequest();  // Traiter les requêtes DNS pour captive portal
   server.handleClient();
 
   if (isRunning) {
